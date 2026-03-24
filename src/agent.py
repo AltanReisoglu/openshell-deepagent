@@ -1,42 +1,64 @@
-"""OpenShell Deep Agent.
+"""OpenShell Deep Agent with AI-Q Blueprint Logic.
 
-General-purpose coding and analysis agent using OpenShell as the on-prem
-sandbox provider. Executes code inside a policy-governed OpenShell sandbox
-with local filesystem persistence for memory and skills.
-
-Quick start:
-  1. Start or select a gateway: openshell gateway start
-  2. (Optional) Pre-create a sandbox: openshell sandbox create --name my-sandbox --keep
-     Then set: export OPENSHELL_SANDBOX_NAME=my-sandbox
-  3. Run: deepagents run src/agent.py:agent
+General-purpose coding and analysis agent using OpenShell and the NVIDIA AI-Q Planner/Researcher pattern.
 """
 
 import os
+import yaml
 from datetime import datetime
-
-from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
+from deepagents import create_deep_agent
 
 from src.backend import create_backend
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from src.prompts import AGENT_INSTRUCTIONS
+from src.prompts import (
+    ORCHESTRATOR_INSTRUCTIONS,
+    PLANNER_INSTRUCTIONS,
+    RESEARCHER_INSTRUCTIONS,
+)
 
 current_date = datetime.now().strftime("%Y-%m-%d")
 
-model = ChatNVIDIA(
-    model="nvidia/nemotron-3-super-120b-a12b",
-    api_key=os.getenv("NVIDIA_API_KEY"),
-    temperature=0.1,
-    max_tokens=16384,
-)
+# 1. Load configuration from AI-Q style yaml
+config_path = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+with open(config_path, "r") as f:
+    config = yaml.safe_load(f)
 
-# model = init_chat_model(
-#    os.environ.get("AGENT_MODEL", "anthropic:claude-sonnet-4-6")
-# )
+def load_llm(name: str):
+    """Helper to instantiate LLMs based on YAML config using init_chat_model."""
+    llm_conf = config["llms"][name]
+    return init_chat_model(
+        llm_conf["model_name"],
+        temperature=llm_conf.get("temperature", 0.1)
+    )
 
+agent_conf = config["functions"]["deep_research_agent"]
+
+# Initialize models according to roles
+orchestrator_llm = load_llm(agent_conf["orchestrator_llm"])
+planner_llm = load_llm(agent_conf["planner_llm"])
+researcher_llm = load_llm(agent_conf["researcher_llm"])
+
+# 2. Define Subagents explicitly to mitigate context length bloat (Lost-in-the-middle)
+subagents = [
+    {
+        "name": "planner-agent",
+        "description": "Content-driven planning. Interleaves reasoning to build test plans and outlines. Call this FIRST.",
+        "system_prompt": PLANNER_INSTRUCTIONS.format(date=current_date),
+        "model": planner_llm,
+    },
+    {
+        "name": "researcher-agent",
+        "description": "Executes coding logic, tests outputs, and runs sandbox operations according to the planner.",
+        "system_prompt": RESEARCHER_INSTRUCTIONS.format(date=current_date),
+        "model": researcher_llm,
+    }
+]
+
+# 3. Build the core Orchestrator Agent
 agent = create_deep_agent(
-    model=model,
-    system_prompt=AGENT_INSTRUCTIONS.format(date=current_date),
+    model=orchestrator_llm,
+    system_prompt=ORCHESTRATOR_INSTRUCTIONS.format(date=current_date),
     memory=["/memory/AGENTS.md"],
     backend=create_backend,
+    subagents=subagents,
 )

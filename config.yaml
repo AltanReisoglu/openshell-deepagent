@@ -1,0 +1,17 @@
+llms:
+  orchestrator_llm:
+    model_name: "anthropic:claude-3-5-sonnet-latest"
+    temperature: 0.1
+  planner_llm:
+    model_name: "anthropic:claude-3-5-sonnet-latest"
+    temperature: 0.1
+  researcher_llm:
+    model_name: "anthropic:claude-3-5-sonnet-latest"
+    temperature: 0.1
+
+functions:
+  deep_research_agent:
+    _type: deep_research_agent
+    orchestrator_llm: orchestrator_llm
+    planner_llm: planner_llm
+    researcher_llm: researcher_llm
